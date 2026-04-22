@@ -1,0 +1,35 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# PyTorc
+*.pt
+*.pth
+*.ckpt
+
+# Dataset
+data/
+*.tar
+*.gz
+
+# Logs
+*.log
+
+
+# VS Code
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+*.png
+*.jpg
