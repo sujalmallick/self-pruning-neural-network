@@ -30,13 +30,13 @@ class PrunableLinear(nn.Module):
         super().__init__()
         self.in_features  = in_features
         self.out_features = out_features
-        self.gate_threshold = 1e-2
+        self.gate_threshold = 0.5
 
         # Standard weight and bias — same as nn.Linear
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         self.bias   = nn.Parameter(torch.zeros(out_features))
 
-        self.gate_scores = nn.Parameter(torch.zeros(out_features, in_features))
+        self.gate_scores = nn.Parameter(torch.ones(out_features, in_features) * 2.0)
 
         # Initialise weights with Kaiming uniform (same default as nn.Linear)
         nn.init.kaiming_uniform_(self.weight, a=5**0.5)
@@ -45,9 +45,15 @@ class PrunableLinear(nn.Module):
         """Continuous gates in (0, 1), used by the sparsity regularizer."""
         return torch.sigmoid(self.gate_scores)
 
+    def _hard_gates_ste(self) -> torch.Tensor:
+        """Hard forward gates with straight-through gradients."""
+        soft = self._soft_gates()
+        hard = (soft >= self.gate_threshold).float()
+        return hard.detach() - soft.detach() + soft
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Step 1: Compute assignment-compliant continuous sigmoid gates.
-        gates = self._soft_gates()                       # shape: (out, in)
+        # Step 1: Compute hard gates in forward, soft gates in backward.
+        gates = self._hard_gates_ste()                   # shape: (out, in)
 
         # Step 2: Element-wise multiply weights by gates
         pruned_weights = self.weight * gates             # shape: (out, in)
@@ -57,8 +63,8 @@ class PrunableLinear(nn.Module):
         return F.linear(x, pruned_weights, self.bias)
 
     def get_gates(self) -> torch.Tensor:
-        """Return continuous gate values (detached) for sparsity analysis."""
-        return self._soft_gates().detach()
+        """Return hard 0/1 gate values (detached) for sparsity analysis."""
+        return (self._soft_gates() >= self.gate_threshold).float().detach()
 
     def sparsity_loss(self) -> torch.Tensor:
         """L1 norm of this layer's gates used in the total loss."""
@@ -123,14 +129,14 @@ class SelfPruningNet(nn.Module):
         """Sum of L1 norms of all gates across all PrunableLinear layers."""
         return sum(layer.sparsity_loss() for layer in self.prunable_layers())
 
-    def sparsity_level(self, threshold: float = 1e-2) -> float:
+    def sparsity_level(self) -> float:
         """
-        Fraction of weights whose gate value < threshold (effectively pruned).
+        Fraction of weights that are exactly pruned by hard gates (gate == 0).
         """
         all_gates = torch.cat(
             [layer.get_gates().flatten() for layer in self.prunable_layers()]
         )
-        pruned = (all_gates < threshold).float().sum()
+        pruned = (all_gates == 0).float().sum()
         return (pruned / all_gates.numel()).item() * 100.0   # percentage
 
 
@@ -241,7 +247,7 @@ def run_experiment(lam: float, epochs: int, train_loader, test_loader, device):
         total_l, cls_l, sparse_l = train_one_epoch(model, train_loader, optimizer, device, lam)
         scheduler.step()
 
-        sparsity = model.sparsity_level(threshold=0.01)
+        sparsity = model.sparsity_level()
         history["total_loss"].append(total_l)
         history["cls_loss"].append(cls_l)
         history["sparse_loss"].append(sparse_l)
@@ -254,7 +260,7 @@ def run_experiment(lam: float, epochs: int, train_loader, test_loader, device):
 
     # Final evaluation
     test_acc  = evaluate(model, test_loader, device)
-    sparsity  = model.sparsity_level(threshold=0.01)
+    sparsity  = model.sparsity_level()
 
     print(f"\nTest Accuracy : {test_acc:.2f}%")
     print(f"Sparsity Level: {sparsity:.2f}%")
@@ -262,6 +268,10 @@ def run_experiment(lam: float, epochs: int, train_loader, test_loader, device):
     # Collect gate values from all layers for plotting
     all_gates = torch.cat(
         [layer.get_gates().flatten() for layer in model.prunable_layers()]
+    ).cpu().numpy()
+
+    all_soft_gates = torch.cat(
+        [layer._soft_gates().detach().flatten() for layer in model.prunable_layers()]
     ).cpu().numpy()
 
     print("Min gate:", all_gates.min())
@@ -272,6 +282,7 @@ def run_experiment(lam: float, epochs: int, train_loader, test_loader, device):
         "test_acc"  : test_acc,
         "sparsity"  : sparsity,
         "all_gates" : all_gates,
+        "all_soft_gates" : all_soft_gates,
         "history"   : history,
         "model"     : model,
     }
@@ -288,16 +299,16 @@ def plot_gate_distributions(results: list, save_path: str = "gate_distributions.
         axes = [axes]
 
     for ax, res in zip(axes, results):
-        gates = res["all_gates"]
+        gates = res["all_soft_gates"]
         ax.hist(gates, bins=80, color="steelblue", edgecolor="white", linewidth=0.3)
         ax.set_title(
             f"λ = {res['lam']}\n"
             f"Acc = {res['test_acc']:.1f}%  |  Sparsity = {res['sparsity']:.1f}%",
             fontsize=12
         )
-        ax.set_xlabel("Gate Value (0 = pruned, 1 = active)", fontsize=10)
+        ax.set_xlabel("Soft Gate Value (0 = pruned, 1 = active)", fontsize=10)
         ax.set_ylabel("Count", fontsize=10)
-        ax.axvline(x=0.01, color="red", linestyle="--", linewidth=1.2, label="Threshold (0.01)")
+        ax.axvline(x=0.5, color="red", linestyle="--", linewidth=1.2, label="Hard gate threshold")
         ax.legend(fontsize=9)
         ax.grid(alpha=0.3)
 

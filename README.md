@@ -16,7 +16,7 @@ During optimization, we learn **soft gates** for the L1 penalty and use **hard 0
 
 ```
 soft_gate = sigmoid(gate_score * temperature)
-hard_gate = 1 if soft_gate >= 0.01 else 0
+hard_gate = 1 if soft_gate >= 0.5 else 0
 effective_weight = weight * hard_gate
 ```
 
@@ -73,7 +73,7 @@ LAMBDAS = [1e-4, 1e-3, 1e-2]
 
 ## 3. Gate Value Distribution Plot
 
-The plot (`gate_distributions.png`) shows the histogram of **soft gate values** after training for each λ.
+The plot (`gate_distributions.png`) shows the histogram of **hard gate values** after training for each λ.
 
 ### What a successful result looks like:
 
@@ -90,11 +90,12 @@ Count
  0                               1
 ```
 
-- A **large spike near 0** means many gates are collapsing toward zero (strong pruning pressure).
-- A **secondary cluster away from 0** means surviving connections still carry signal.
-- As λ increases, the spike near 0 grows taller and the away-from-zero cluster shrinks.
 
-The red dashed line at 0.01 marks the pruning threshold used for hard-gate decisions.
+- A **large spike at 0** means many weights are exactly pruned by hard gates.
+- A **secondary cluster near 1** means surviving weights stay active.
+- As λ increases, the spike at 0 grows taller and the cluster near 1 shrinks.
+
+The red dashed line at 0.5 marks the hard-gate threshold used for pruning decisions.
 
 ---
 
@@ -117,12 +118,12 @@ Using STE, backpropagation uses the gradient path of `soft_gate` while forward u
 
 CIFAR-10 with a pure feed-forward network tends to overfit. BatchNorm stabilises training; Dropout provides an independent regularisation signal so the L1 penalty is not competing with dropout alone.
 
-### Hard-Gate Threshold Choice (0.01)
+### Hard-Gate Threshold Choice (0.5)
 
-The model applies a hard gate with threshold `0.01` on the sigmoid output during forward pass:
+The model applies a hard gate with threshold `0.5` on the sigmoid output during forward pass:
 
-- `soft_gate >= 0.01` → active connection (`hard_gate = 1`)
-- `soft_gate < 0.01`  → pruned connection (`hard_gate = 0`)
+- `soft_gate >= 0.5` → active connection (`hard_gate = 1`)
+- `soft_gate < 0.5`  → pruned connection (`hard_gate = 0`)
 
 Because forward uses hard gates, sparsity is measured directly as the percentage of exact zeros.
 
