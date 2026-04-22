@@ -36,7 +36,7 @@ class PrunableLinear(nn.Module):
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         self.bias   = nn.Parameter(torch.zeros(out_features))
 
-        self.gate_scores = nn.Parameter(torch.ones(out_features, in_features) * 2.0)
+        self.gate_scores = nn.Parameter(torch.zeros(out_features, in_features))
 
         # Initialise weights with Kaiming uniform (same default as nn.Linear)
         nn.init.kaiming_uniform_(self.weight, a=5**0.5)
@@ -299,20 +299,29 @@ def plot_gate_distributions(results: list, save_path: str = "gate_distributions.
         axes = [axes]
 
     for ax, res in zip(axes, results):
-        gates = res["all_soft_gates"]
-        ax.hist(gates, bins=80, color="steelblue", edgecolor="white", linewidth=0.3)
+        gates = res["all_gates"]  # hard 0/1 values
+
+        n_pruned = (gates == 0).sum()
+        n_active = (gates == 1).sum()
+
+        ax.bar(
+            [0, 1],
+            [n_pruned, n_active],
+            color=["steelblue", "orange"],
+            edgecolor="white",
+            width=0.4,
+        )
         ax.set_title(
             f"λ = {res['lam']}\n"
             f"Acc = {res['test_acc']:.1f}%  |  Sparsity = {res['sparsity']:.1f}%",
             fontsize=12
         )
-        ax.set_xlabel("Soft Gate Value (0 = pruned, 1 = active)", fontsize=10)
-        ax.set_ylabel("Count", fontsize=10)
-        ax.axvline(x=0.5, color="red", linestyle="--", linewidth=1.2, label="Hard gate threshold")
-        ax.legend(fontsize=9)
-        ax.grid(alpha=0.3)
+        ax.set_ylabel("Number of Weights", fontsize=10)
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["Pruned (0)", "Active (1)"], fontsize=11)
+        ax.grid(alpha=0.3, axis="y")
 
-    plt.suptitle("Gate Value Distributions — Self-Pruning Network", fontsize=14, fontweight="bold")
+    plt.suptitle("Gate Distributions — Self-Pruning Network", fontsize=14, fontweight="bold")
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
@@ -336,12 +345,12 @@ def print_results_table(results: list):
 if __name__ == "__main__":
 
     # ── Config 
-    EPOCHS     = 30
+    EPOCHS     = 50
     BATCH_SIZE = 128
     DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Three λ values: low / medium / high sparsity pressure
-    LAMBDAS = [1e-4, 1e-3, 1e-2]
+    LAMBDAS = [1e-7, 1e-6, 1e-5]
 
     print(f"  Device : {DEVICE}")
     print(f"  Epochs : {EPOCHS}")
